@@ -1,4 +1,5 @@
 .DS_Store
+.idea
 *.sqlite3
 *.db
 *.elc

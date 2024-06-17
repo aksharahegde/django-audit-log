@@ -1,10 +1,15 @@
+from functools import partial
 from django.db.models import signals
-from django.utils.deprecation import MiddlewareMixin
-from django.utils.functional import curry
+
+try:
+    from django.utils.deprecation import MiddlewareMixin
+except ImportError:
+    MiddlewareMixin = object
 
 from audit_log import registration, settings
 from audit_log.models import fields
 from audit_log.models.managers import AuditLogManager
+
 
 def _disable_audit_log_managers(instance):
     for attr in dir(instance):
@@ -28,29 +33,36 @@ class UserLoggingMiddleware(MiddlewareMixin):
     def process_request(self, request):
         if settings.DISABLE_AUDIT_LOG:
             return
-        if not request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
-            if hasattr(request, 'user') and request.user.is_authenticated:
-                user = request.user
-            else:
-                user = None
-            session = request.session.session_key
-            update_pre_save_info = curry(self._update_pre_save_info, user, session)
-            update_post_save_info = curry(self._update_post_save_info, user, session)
-            signals.pre_save.connect(update_pre_save_info,  dispatch_uid = (self.__class__, request,), weak = False)
-            signals.post_save.connect(update_post_save_info,  dispatch_uid = (self.__class__, request,), weak = False)
+        if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+            return
+        if hasattr(request, 'user') and request.user.is_authenticated:
+            user = request.user
+        else:
+            user = None
+        session = request.session.session_key
+        update_pre_save_info = partial(self._update_pre_save_info, user,
+                                       session)
+        update_post_save_info = partial(self._update_post_save_info, user,
+                                        session)
+        signals.pre_save.connect(update_pre_save_info,
+                                 dispatch_uid=(self.__class__, request,),
+                                 weak=False)
+        signals.post_save.connect(update_post_save_info,
+                                  dispatch_uid=(self.__class__, request,),
+                                  weak=False)
 
     def process_response(self, request, response):
         if settings.DISABLE_AUDIT_LOG:
             return
-        signals.pre_save.disconnect(dispatch_uid =  (self.__class__, request,))
-        signals.post_save.disconnect(dispatch_uid =  (self.__class__, request,))
+        signals.pre_save.disconnect(dispatch_uid=(self.__class__, request,))
+        signals.post_save.disconnect(dispatch_uid=(self.__class__, request,))
         return response
 
     def process_exception(self, request, exception):
         if settings.DISABLE_AUDIT_LOG:
             return None
-        signals.pre_save.disconnect(dispatch_uid =  (self.__class__, request,))
-        signals.post_save.disconnect(dispatch_uid =  (self.__class__, request,))
+        signals.pre_save.disconnect(dispatch_uid=(self.__class__, request,))
+        signals.post_save.disconnect(dispatch_uid=(self.__class__, request,))
         return None
 
     def _update_pre_save_info(self, user, session, sender, instance, **kwargs):
@@ -64,8 +76,8 @@ class UserLoggingMiddleware(MiddlewareMixin):
             for field in registry.get_fields(sender):
                 setattr(instance, field.name, session)
 
-
-    def _update_post_save_info(self, user, session, sender, instance, created, **kwargs ):
+    def _update_post_save_info(self, user, session, sender, instance, created,
+                               **kwargs):
         if created:
             registry = registration.FieldRegistry(fields.CreatingUserField)
             if sender in registry:
@@ -75,8 +87,8 @@ class UserLoggingMiddleware(MiddlewareMixin):
                     instance.save()
                     _enable_audit_log_managers(instance)
 
-
-            registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
+            registry = registration.FieldRegistry(
+                fields.CreatingSessionKeyField)
             if sender in registry:
                 for field in registry.get_fields(sender):
                     setattr(instance, field.name, session)
@@ -85,15 +97,11 @@ class UserLoggingMiddleware(MiddlewareMixin):
                     _enable_audit_log_managers(instance)
 
 
-
-
-
 class JWTAuthMiddleware(MiddlewareMixin):
     """
     Convenience middleware for users of django-rest-framework-jwt.
     Fixes issue https://github.com/GetBlimp/django-rest-framework-jwt/issues/45
     """
-
 
     def get_user_jwt(self, request):
         from rest_framework.request import Request
@@ -106,7 +114,8 @@ class JWTAuthMiddleware(MiddlewareMixin):
         if user.is_authenticated:
             return user
         try:
-            user_jwt = JSONWebTokenAuthentication().authenticate(Request(request))
+            user_jwt = JSONWebTokenAuthentication().authenticate(
+                Request(request))
             if user_jwt is not None:
                 return user_jwt[0]
         except AuthenticationFailed:
@@ -115,8 +124,8 @@ class JWTAuthMiddleware(MiddlewareMixin):
 
     def process_request(self, request):
         from django.utils.functional import SimpleLazyObject
-        assert hasattr(request, 'session'),\
-        """The Django authentication middleware requires session middleware to be installed.
+        assert hasattr(request, 'session'), \
+            """The Django authentication middleware requires session middleware to be installed.
          Edit your MIDDLEWARE setting to insert 'django.contrib.sessions.middleware.SessionMiddleware'."""
 
         request.user = SimpleLazyObject(lambda: self.get_user_jwt(request))
