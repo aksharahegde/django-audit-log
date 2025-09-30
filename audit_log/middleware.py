@@ -319,7 +319,7 @@ if ASGI_AVAILABLE:
         """
         
         def __init__(self, send, cleanup_func, request):
-            self.send = send
+            self._wrapped_send = send
             self.cleanup_func = cleanup_func
             self.request = request
             self.started = False
@@ -331,7 +331,7 @@ if ASGI_AVAILABLE:
                 # Response is complete, cleanup signals
                 await self.cleanup_func(self.request)
             
-            await self.send(message)
+            await self._wrapped_send(message)
 
 
     class ASGIJWTAuthMiddleware:
