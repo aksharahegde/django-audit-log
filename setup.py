@@ -30,19 +30,31 @@ setup(
     download_url = 'https://github.com/Atomidata/django-audit-log/downloads',
     include_package_data = True,
     zip_safe = False,
+    
+    install_requires = [
+        'Django>=4.0',
+    ],
+    
+    extras_require = {
+        'asgi': ['asgiref>=3.2.0'],
+    },
 
     classifiers = STATUS + [
        'Environment :: Plugins',
         'Framework :: Django',
+        'Framework :: Django :: 4.0',
+        'Framework :: Django :: 4.1',
+        'Framework :: Django :: 4.2',
+        'Framework :: Django :: 5.0',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: BSD License',
         'Topic :: Software Development :: Libraries :: Python Modules',
          'Programming Language :: Python',
-         'Programming Language :: Python :: 2.6',
-         'Programming Language :: Python :: 2.7',
          'Programming Language :: Python :: 3',
-         'Programming Language :: Python :: 3.2',
-         'Programming Language :: Python :: 3.3',
-         'Programming Language :: Python :: 3.4',
+         'Programming Language :: Python :: 3.8',
+         'Programming Language :: Python :: 3.9',
+         'Programming Language :: Python :: 3.10',
+         'Programming Language :: Python :: 3.11',
+         'Programming Language :: Python :: 3.12',
     ],
 )

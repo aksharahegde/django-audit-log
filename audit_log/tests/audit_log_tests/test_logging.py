@@ -8,26 +8,26 @@ from .views import (index, rate_product, CategoryCreateView, ProductCreateView,
                     EmployeeCreateView, EmployeeUpdateView)
 from django.test.client import Client
 
-from django.conf.urls import patterns, include, url
+from django.urls import path, re_path
 
 # Uncomment the next two lines to enable the admin:
 from django.contrib import admin
 admin.autodiscover()
 
-urlpatterns = patterns('',
-    url(r'^/$', index),
-    url(r'^rate/(\d)/$', rate_product),
-    url(r'^category/create/$', CategoryCreateView.as_view()),
-    url(r'^product/create/$', ProductCreateView.as_view()),
-    url(r'^product/update/(?P<pk>\d+)/$', ProductUpdateView.as_view()),
-    url(r'^product/delete/(?P<pk>\d+)/$', ProductDeleteView.as_view()),
-    url(r'^extremewidget/create/$', ExtremeWidgetCreateView.as_view()),
-    url(r'^propertyowner/create/$', PropertyOwnerCreateView.as_view()),
-    url(r'^property/create/$', PropertyCreateView.as_view()),
-    url(r'^property/update/(?P<pk>\d+)/$', PropertyUpdateView.as_view()),
-    url(r'^employee/create/$', EmployeeCreateView.as_view()),
-    url(r'^employee/update/(?P<pk>\d+)/$', EmployeeUpdateView.as_view()),
-)
+urlpatterns = [
+    path('', index, name='index'),
+    re_path(r'^rate/(\d)/$', rate_product, name='rate_product'),
+    path('category/create/', CategoryCreateView.as_view(), name='category_create'),
+    path('product/create/', ProductCreateView.as_view(), name='product_create'),
+    path('product/update/<int:pk>/', ProductUpdateView.as_view(), name='product_update'),
+    path('product/delete/<int:pk>/', ProductDeleteView.as_view(), name='product_delete'),
+    path('extremewidget/create/', ExtremeWidgetCreateView.as_view(), name='extremewidget_create'),
+    path('propertyowner/create/', PropertyOwnerCreateView.as_view(), name='propertyowner_create'),
+    path('property/create/', PropertyCreateView.as_view(), name='property_create'),
+    path('property/update/<int:pk>/', PropertyUpdateView.as_view(), name='property_update'),
+    path('employee/create/', EmployeeCreateView.as_view(), name='employee_create'),
+    path('employee/update/<int:pk>/', EmployeeUpdateView.as_view(), name='employee_update'),
+]
 
 
 
@@ -63,12 +63,12 @@ class LogEntryMetaOptionsTest(TestCase):
 
 
     def test_app_label(self):
-        self.failUnlessEqual(Product.audit_log.model._meta.app_label, Product._meta.app_label)
-        self.failUnlessEqual(WarehouseEntry.audit_log.model._meta.app_label, WarehouseEntry._meta.app_label)
+        self.assertEqual(Product.audit_log.model._meta.app_label, Product._meta.app_label)
+        self.assertEqual(WarehouseEntry.audit_log.model._meta.app_label, WarehouseEntry._meta.app_label)
 
     def test_table_name(self):
-        self.failUnlessEqual(Product.audit_log.model._meta.db_table, "%sauditlogentry"%Product._meta.db_table)
-        self.failUnlessEqual(WarehouseEntry.audit_log.model._meta.db_table, "%sauditlogentry"%WarehouseEntry._meta.db_table)
+        self.assertEqual(Product.audit_log.model._meta.db_table, "%sauditlogentry"%Product._meta.db_table)
+        self.assertEqual(WarehouseEntry.audit_log.model._meta.db_table, "%sauditlogentry"%WarehouseEntry._meta.db_table)
 
 
 class TrackingAuthFieldsTest(TestCase):
@@ -197,9 +197,9 @@ class TrackingChangesTest(TestCase):
         c.login(username = "admin@example.com", password = "admin")
         c.post('/extremewidget/create/', {'name': 'Test name', 'special_power': 'Testpower'})
         widget = ExtremeWidget.objects.all()[0]
-        self.failUnlessEqual(widget.audit_log.all()[0].name, 'Test name')
-        self.failUnlessEqual(hasattr(widget.audit_log.all()[0], 'special_power'), True)
-        self.failUnlessEqual(widget.audit_log.all()[0].special_power, "Testpower")
+        self.assertEqual(widget.audit_log.all()[0].name, 'Test name')
+        self.assertEqual(hasattr(widget.audit_log.all()[0], 'special_power'), True)
+        self.assertEqual(widget.audit_log.all()[0].special_power, "Testpower")
 
     def test_logging_custom_user(self):
         _setup_admin()

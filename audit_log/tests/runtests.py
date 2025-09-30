@@ -24,7 +24,7 @@ ALWAYS_INSTALLED_APPS = (
     'django.contrib.staticfiles',
 )
 
-ALWAYS_MIDDLEWARE_CLASSES = (
+ALWAYS_MIDDLEWARE = (
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -38,10 +38,9 @@ ALWAYS_MIDDLEWARE_CLASSES = (
 settings.configure(
     SECRET_KEY="django_tests_secret_key",
     DEBUG=True,
-    TEMPLATE_DEBUG=True,
     ALLOWED_HOSTS=[],
     INSTALLED_APPS=ALWAYS_INSTALLED_APPS + CUSTOM_INSTALLED_APPS,
-    MIDDLEWARE_CLASSES=ALWAYS_MIDDLEWARE_CLASSES,
+    MIDDLEWARE=ALWAYS_MIDDLEWARE,
     ROOT_URLCONF='tests.urls',
     DATABASES={
         'default': {
@@ -55,15 +54,25 @@ settings.configure(
     USE_TZ=True,
     STATIC_URL='/static/',
     # Use a fast hasher to speed up tests.
-    PASSWORD_HASHERS=(
+    PASSWORD_HASHERS=[
         'django.contrib.auth.hashers.MD5PasswordHasher',
-    ),
+    ],
     FIXTURE_DIRS=glob.glob(BASE_DIR + '/' + '*/fixtures/'),
-    TEMPLATE_DIRS = (
-        os.path.abspath(os.path.join(BASE_DIR, 'templates')),
-    ),
-
-
+    TEMPLATES=[
+        {
+            'BACKEND': 'django.template.backends.django.DjangoTemplates',
+            'DIRS': [os.path.abspath(os.path.join(BASE_DIR, 'templates'))],
+            'APP_DIRS': True,
+            'OPTIONS': {
+                'context_processors': [
+                    'django.template.context_processors.debug',
+                    'django.template.context_processors.request',
+                    'django.contrib.auth.context_processors.auth',
+                    'django.contrib.messages.context_processors.messages',
+                ],
+            },
+        },
+    ],
 )
 
 django.setup()

@@ -28,13 +28,14 @@ Tracking changes to django models.
 * Model fields for keeping track of the user and session that created and modified a model instance.
 * Abstract model class with fields ``created_by`` and ``modified_by`` fields.
 * A model manager class that can automatically track changes made to a model in the database.
-* Support for Django 1.6 and 1.7, South migrations, Django 1.7 migrations and custom User classes.
-* Python 3 and 2.x support
+* Support for Django 4.0+ and custom User classes.
+* Python 3.8+ support
+* ASGI support for Django 4.0+ applications
 
 `The documentation can be found here <http://django-audit-log.readthedocs.org/en/latest/index.html>`_
 
 **Tracking full model history on M2M relations is not supported yet.**
-**Version 0.3.0 onwards is tested with Django 1.6. It should work with older versions of Django, but may break things unexpectedly!**
+**Version 1.0.0+ requires Django 4.0+ and Python 3.8+.**
 
 
 Quickstart Guide
@@ -44,18 +45,46 @@ Install it with pip from PyPi::
 
     pip install django-audit-log
 
-Add ``audit_log.middleware.UserLoggingMiddleware`` to your ``MIDDLEWARE_CLASSES``::
+For ASGI support (Django 4.0+), install with the ASGI extra::
 
+    pip install django-audit-log[asgi]
 
-    MIDDLEWARE_CLASSES = (
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'audit_log.middleware.UserLoggingMiddleware',
-    )
+WSGI Setup
+----------
+
+Add ``audit_log.middleware.UserLoggingMiddleware`` to your ``MIDDLEWARE``::
+
+    MIDDLEWARE = [
+        'django.contrib.sessions.middleware.SessionMiddleware',
+        'django.middleware.common.CommonMiddleware',
+        'django.middleware.csrf.CsrfViewMiddleware',
+        'django.contrib.auth.middleware.AuthenticationMiddleware',
+        'django.contrib.messages.middleware.MessageMiddleware',
+        'django.middleware.clickjacking.XFrameOptionsMiddleware',
+        'audit_log.middleware.UserLoggingMiddleware',
+    ]
+
+ASGI Setup
+----------
+
+For Django ASGI applications, wrap your ASGI application with the audit logging middleware::
+
+    from audit_log.asgi import get_asgi_application
+    from django.core.asgi import get_asgi_application as django_get_asgi_application
+    
+    # Get your Django ASGI application
+    django_asgi_app = django_get_asgi_application()
+    
+    # Wrap it with audit logging middleware
+    application = get_asgi_application()(django_asgi_app)
+
+Or manually apply the middleware::
+
+    from audit_log.middleware import ASGIUserLoggingMiddleware
+    from django.core.asgi import get_asgi_application
+    
+    django_asgi_app = get_asgi_application()
+    application = ASGIUserLoggingMiddleware(django_asgi_app)
 
 
 To just track who created or edited a model instance just make it inherit from ``AuthStampedModel``::
