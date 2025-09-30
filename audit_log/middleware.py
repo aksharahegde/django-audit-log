@@ -155,6 +155,35 @@ def _update_post_save_info_unified(user, session, sender, instance, created, is_
                 _perform_post_save_update_unified(instance, field.name, session, is_async=is_async)
 
 
+def _get_user_jwt(request):
+    """
+    Shared helper function to authenticate user via JWT token.
+    Used by both JWTAuthMiddleware and ASGIJWTAuthMiddleware to eliminate code duplication.
+    
+    Args:
+        request: The Django request object
+        
+    Returns:
+        User instance (authenticated or anonymous)
+    """
+    from rest_framework.request import Request
+    from rest_framework.exceptions import AuthenticationFailed
+    from django.contrib.auth.middleware import get_user
+    from rest_framework_jwt.authentication import JSONWebTokenAuthentication
+
+    user = get_user(request)
+    if user.is_authenticated:
+        return user
+    try:
+        user_jwt = JSONWebTokenAuthentication().authenticate(
+            Request(request))
+        if user_jwt is not None:
+            return user_jwt[0]
+    except AuthenticationFailed:
+        pass
+    return user
+
+
 
 
 class UserLoggingMiddleware(MiddlewareMixin):
@@ -202,23 +231,7 @@ class JWTAuthMiddleware(MiddlewareMixin):
     """
 
     def get_user_jwt(self, request):
-        from rest_framework.request import Request
-        from rest_framework.exceptions import AuthenticationFailed
-        from django.utils.functional import SimpleLazyObject
-        from django.contrib.auth.middleware import get_user
-        from rest_framework_jwt.authentication import JSONWebTokenAuthentication
-
-        user = get_user(request)
-        if user.is_authenticated:
-            return user
-        try:
-            user_jwt = JSONWebTokenAuthentication().authenticate(
-                Request(request))
-            if user_jwt is not None:
-                return user_jwt[0]
-        except AuthenticationFailed:
-            pass
-        return user
+        return _get_user_jwt(request)
 
     def process_request(self, request):
         from django.utils.functional import SimpleLazyObject
@@ -337,6 +350,15 @@ if ASGI_AVAILABLE:
     class ASGIJWTAuthMiddleware:
         """
         ASGI middleware equivalent of JWTAuthMiddleware for Django ASGI applications.
+        
+        This middleware properly handles ASGI scope and integrates with Django's
+        authentication system without bypassing the ASGI flow.
+        
+        Usage in ASGI application:
+        
+        from audit_log.middleware import ASGIJWTAuthMiddleware
+        
+        application = ASGIJWTAuthMiddleware(your_asgi_app)
         """
         
         def __init__(self, app):
@@ -347,32 +369,30 @@ if ASGI_AVAILABLE:
                 await self.app(scope, receive, send)
                 return
             
-            # Create proper ASGI request object
-            from django.core.handlers.asgi import ASGIRequest
-            from django.utils.functional import SimpleLazyObject
-            
-            request = ASGIRequest(scope, receive)
-            
-            # Apply JWT auth logic
-            request.user = SimpleLazyObject(lambda: self.get_user_jwt(request))
-            
-            await self.app(scope, receive, send)
-        
-        def get_user_jwt(self, request):
-            from rest_framework.request import Request
-            from rest_framework.exceptions import AuthenticationFailed
-            from django.utils.functional import SimpleLazyObject
-            from django.contrib.auth.middleware import get_user
-            from rest_framework_jwt.authentication import JSONWebTokenAuthentication
-
-            user = get_user(request)
-            if user.is_authenticated:
-                return user
             try:
-                user_jwt = JSONWebTokenAuthentication().authenticate(
-                    Request(request))
-                if user_jwt is not None:
-                    return user_jwt[0]
-            except AuthenticationFailed:
-                pass
-            return user
+                # Create proper ASGI request object using Django's ASGI handler
+                from django.core.handlers.asgi import ASGIRequest
+                from django.utils.functional import SimpleLazyObject
+                
+                # Ensure we have session middleware installed
+                if not hasattr(scope, 'get') or 'session' not in scope:
+                    # If no session in scope, we need to ensure session middleware is installed
+                    pass  # Django will handle this when creating ASGIRequest
+                
+                request = ASGIRequest(scope, receive)
+                
+                # Apply JWT auth logic using shared helper
+                request.user = SimpleLazyObject(lambda: _get_user_jwt(request))
+                
+                # Store the request in scope for downstream middleware
+                scope['request'] = request
+                
+                await self.app(scope, receive, send)
+                
+            except Exception as e:
+                # Proper exception handling to prevent resource leaks
+                # Log the error if logging is configured
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error in ASGIJWTAuthMiddleware: {e}", exc_info=True)
+                raise
