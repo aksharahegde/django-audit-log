@@ -47,44 +47,51 @@ def _update_pre_save_info_common(user, session, sender, instance, **kwargs):
             setattr(instance, field.name, session)
 
 
+def _perform_post_save_update(instance, field_name, value):
+    """Helper to update an instance field and save it with audit managers disabled."""
+    setattr(instance, field_name, value)
+    _disable_audit_log_managers(instance)
+    instance.save()
+    _enable_audit_log_managers(instance)
+
+
+def _make_async_signal_handler(sync_handler):
+    """
+    Wraps a synchronous signal handler to run in a thread pool for ASGI contexts.
+    
+    Django signals are synchronous, so they will call handlers synchronously even in
+    ASGI contexts. This wrapper ensures the handler runs in a thread pool to avoid
+    blocking the event loop.
+    """
+    def wrapper(*args, **kwargs):
+        # Import here to avoid issues if not in async context
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in an async context, schedule the sync handler in thread pool
+            asyncio.create_task(
+                sync_to_async(sync_handler, thread_sensitive=True)(*args, **kwargs)
+            )
+        except RuntimeError:
+            # No running event loop, just call synchronously
+            sync_handler(*args, **kwargs)
+    return wrapper
+
+
 def _update_post_save_info_common(user, session, sender, instance, created, **kwargs):
     """Common logic for updating post-save info (creating user and session fields)."""
     if created:
         registry = registration.FieldRegistry(fields.CreatingUserField)
         if sender in registry:
             for field in registry.get_fields(sender):
-                setattr(instance, field.name, user)
-                _disable_audit_log_managers(instance)
-                instance.save()
-                _enable_audit_log_managers(instance)
+                _perform_post_save_update(instance, field.name, user)
 
         registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
         if sender in registry:
             for field in registry.get_fields(sender):
-                setattr(instance, field.name, session)
-                _disable_audit_log_managers(instance)
-                instance.save()
-                _enable_audit_log_managers(instance)
+                _perform_post_save_update(instance, field.name, session)
 
 
-async def _update_post_save_info_async(user, session, sender, instance, created, **kwargs):
-    """Async version of post-save info update for ASGI."""
-    if created:
-        registry = registration.FieldRegistry(fields.CreatingUserField)
-        if sender in registry:
-            for field in registry.get_fields(sender):
-                setattr(instance, field.name, user)
-                _disable_audit_log_managers(instance)
-                await sync_to_async(instance.save, thread_sensitive=True)()
-                _enable_audit_log_managers(instance)
-
-        registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
-        if sender in registry:
-            for field in registry.get_fields(sender):
-                setattr(instance, field.name, session)
-                _disable_audit_log_managers(instance)
-                await sync_to_async(instance.save, thread_sensitive=True)()
-                _enable_audit_log_managers(instance)
 
 
 class UserLoggingMiddleware(MiddlewareMixin):
@@ -219,17 +226,19 @@ if ASGI_AVAILABLE:
             else:
                 session = None
             
+            # Django signals are synchronous and can't directly call async handlers.
+            # We wrap the handlers to run in a thread pool when called from async context.
             update_pre_save_info = partial(_update_pre_save_info_common, user, session)
-            update_post_save_info = partial(_update_post_save_info_async, user, session)
+            update_post_save_info = partial(_update_post_save_info_common, user, session)
             
-            # Use sync_to_async to wrap the signal handlers for ASGI
-            async_pre_save_info = sync_to_async(update_pre_save_info, thread_sensitive=True)
-            async_post_save_info = sync_to_async(update_post_save_info, thread_sensitive=True)
+            # Wrap handlers to execute in thread pool for ASGI
+            async_pre_save_handler = _make_async_signal_handler(update_pre_save_info)
+            async_post_save_handler = _make_async_signal_handler(update_post_save_info)
             
-            signals.pre_save.connect(async_pre_save_info,
+            signals.pre_save.connect(async_pre_save_handler,
                                    dispatch_uid=(self.__class__, request,),
                                    weak=False)
-            signals.post_save.connect(async_post_save_info,
+            signals.post_save.connect(async_post_save_handler,
                                     dispatch_uid=(self.__class__, request,),
                                     weak=False)
         
