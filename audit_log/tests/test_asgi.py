@@ -4,6 +4,7 @@ Tests for ASGI compatibility of django-audit-log.
 
 import unittest
 from unittest.mock import Mock, patch, AsyncMock
+import pytest
 from django.test import TestCase
 from django.http import HttpRequest
 from django.contrib.auth.models import AnonymousUser
@@ -27,17 +28,19 @@ class ASGIMiddlewareTestCase(TestCase):
         self.app = AsyncMock()
         self.middleware = ASGIUserLoggingMiddleware(self.app)
         
-    def test_non_http_scope_passthrough(self):
+    @pytest.mark.asyncio
+    async def test_non_http_scope_passthrough(self):
         """Test that non-HTTP scopes are passed through unchanged."""
         scope = {"type": "websocket"}
         receive = Mock()
         send = Mock()
         
         # This should not raise an exception and should call the app
-        self.middleware.__call__(scope, receive, send)
+        await self.middleware(scope, receive, send)
         self.app.assert_called_once_with(scope, receive, send)
     
-    def test_http_scope_processing(self):
+    @pytest.mark.asyncio
+    async def test_http_scope_processing(self):
         """Test that HTTP scopes are processed correctly."""
         scope = {
             "type": "http",
@@ -54,7 +57,7 @@ class ASGIMiddlewareTestCase(TestCase):
             mock_wrapper.return_value = mock_wrapper_instance
             
             # This should not raise an exception
-            self.middleware.__call__(scope, receive, send)
+            await self.middleware(scope, receive, send)
             
             # Verify the app was called with the wrapper
             self.app.assert_called_once_with(scope, receive, mock_wrapper_instance.send)
@@ -105,16 +108,18 @@ class ASGIJWTAuthMiddlewareTestCase(TestCase):
         self.app = AsyncMock()
         self.middleware = ASGIJWTAuthMiddleware(self.app)
     
-    def test_non_http_scope_passthrough(self):
+    @pytest.mark.asyncio
+    async def test_non_http_scope_passthrough(self):
         """Test that non-HTTP scopes are passed through unchanged."""
         scope = {"type": "websocket"}
         receive = Mock()
         send = Mock()
         
-        self.middleware.__call__(scope, receive, send)
+        await self.middleware(scope, receive, send)
         self.app.assert_called_once_with(scope, receive, send)
     
-    def test_http_scope_with_jwt_auth(self):
+    @pytest.mark.asyncio
+    async def test_http_scope_with_jwt_auth(self):
         """Test HTTP scope processing with JWT authentication."""
         scope = {
             "type": "http",
@@ -134,7 +139,7 @@ class ASGIJWTAuthMiddlewareTestCase(TestCase):
             mock_auth_instance = Mock()
             mock_auth_middleware.return_value = mock_auth_instance
             
-            self.middleware.__call__(scope, receive, send)
+            await self.middleware(scope, receive, send)
             
             # Verify middleware was applied
             mock_session_instance.process_request.assert_called_once()
