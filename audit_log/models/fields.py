@@ -50,21 +50,4 @@ class CreatingSessionKeyField(LastSessionKeyField):
     pass
 
 
-#South stuff:
-
-rules = [((LastUserField, CreatingUserField),
-    [],
-    {
-        'to': ['rel.to', {'default': getattr(settings, 'AUTH_USER_MODEL', 'auth.User')}],
-        'null': ['null', {'default': True}],
-    },)]
-
-try:
-    from south.modelsinspector import add_introspection_rules
-    # Add the rules for the `LastUserField`
-    add_introspection_rules(rules, ['^audit_log\.models\.fields\.LastUserField'])
-    add_introspection_rules(rules, ['^audit_log\.models\.fields\.CreatingUserField'])
-    add_introspection_rules([], ['^audit_log\.models\.fields\.LastSessionKeyField'])
-    add_introspection_rules([], ['^audit_log\.models\.fields\.CreatingSessionKeyField'])
-except ImportError:
-    pass
+# Note: South migrations support removed in Django 4.0+ as Django has built-in migrations

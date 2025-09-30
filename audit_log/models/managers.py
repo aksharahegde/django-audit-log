@@ -3,9 +3,10 @@ from __future__ import unicode_literals
 import copy
 import datetime
 from django.db import models
-from django.utils.functional import curry
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
+
+# Note: curry was removed in Django 4.0, but it's not used in this code anyway
 
 from audit_log.models.fields import LastUserField
 from audit_log import settings as local_settings
@@ -137,7 +138,25 @@ class AuditLog(object):
 
             if not field.name in self._exclude:
 
-                field  = copy.deepcopy(field)
+                # Handle foreign key fields specially to avoid related_name conflicts
+                if isinstance(field, (models.ForeignKey, models.OneToOneField)):
+                    # Create a new field with unique related_name
+                    new_field = models.ForeignKey(
+                        to=field.remote_field.model,
+                        on_delete=field.remote_field.on_delete,
+                        null=field.null,
+                        blank=field.blank,
+                        db_index=field.db_index,
+                        related_name='_auditlog_{}_{}'.format(
+                            model._meta.model_name,
+                            field.name
+                        ),
+                        verbose_name=field.verbose_name,
+                        help_text=field.help_text,
+                    )
+                    field = new_field
+                else:
+                    field = copy.deepcopy(field)
 
                 if isinstance(field, models.AutoField):
                     #we replace the AutoField of the original model
@@ -164,22 +183,6 @@ class AuditLog(object):
                     field.primary_key = False
                     field._unique = False
                     field.db_index = True
-
-
-                if field.remote_field and field.remote_field.related_name:
-                    field.remote_field.related_name = '_auditlog_{}_{}'.format(
-                        model._meta.model_name,
-                        field.remote_field.related_name
-                    )
-                elif field.remote_field:
-                    try:
-                        if field.remote_field.get_accessor_name():
-                            field.remote_field.related_name = '_auditlog_{}_{}'.format(
-                                model._meta.model_name,
-                                field.remote_field.get_accessor_name()
-                            )
-                    except e:
-                        pass
 
                 fields[field.name] = field
 
