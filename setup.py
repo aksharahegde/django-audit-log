@@ -33,7 +33,6 @@ setup(
     
     install_requires = [
         'Django>=4.0',
-        'asgiref>=3.2.0',
     ],
     
     extras_require = {

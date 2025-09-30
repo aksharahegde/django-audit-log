@@ -182,6 +182,7 @@ class ASGIUnavailableTestCase(TestCase):
     def test_get_asgi_application_raises_error(self):
         """Test that get_asgi_application raises an error when ASGI is not available."""
         with self.assertRaises(ImportError) as context:
+            from audit_log.asgi import get_asgi_application
             get_asgi_application()
         
         self.assertIn("ASGI support requires asgiref>=3.2.0", str(context.exception))
