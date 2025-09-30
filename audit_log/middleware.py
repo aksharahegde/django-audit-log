@@ -47,12 +47,36 @@ def _update_pre_save_info_common(user, session, sender, instance, **kwargs):
             setattr(instance, field.name, session)
 
 
+async def _perform_post_save_update_async(instance, field_name, value):
+    """Async helper to update an instance field and save it with audit managers disabled."""
+    setattr(instance, field_name, value)
+    _disable_audit_log_managers(instance)
+    await sync_to_async(instance.save, thread_sensitive=True)()
+    _enable_audit_log_managers(instance)
+
+
 def _perform_post_save_update(instance, field_name, value):
-    """Helper to update an instance field and save it with audit managers disabled."""
+    """Sync helper to update an instance field and save it with audit managers disabled."""
     setattr(instance, field_name, value)
     _disable_audit_log_managers(instance)
     instance.save()
     _enable_audit_log_managers(instance)
+
+
+def _perform_post_save_update_unified(instance, field_name, value, is_async=False):
+    """
+    Unified helper to update an instance field and save it with audit managers disabled.
+    
+    Args:
+        instance: The model instance to update
+        field_name: The field name to set
+        value: The value to set
+        is_async: If True, uses async save method; if False, uses sync save method
+    """
+    if is_async:
+        return _perform_post_save_update_async(instance, field_name, value)
+    else:
+        return _perform_post_save_update(instance, field_name, value)
 
 
 def _make_async_signal_handler(sync_handler):
@@ -78,6 +102,20 @@ def _make_async_signal_handler(sync_handler):
     return wrapper
 
 
+async def _update_post_save_info_common_async(user, session, sender, instance, created, **kwargs):
+    """Async common logic for updating post-save info (creating user and session fields)."""
+    if created:
+        registry = registration.FieldRegistry(fields.CreatingUserField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                await _perform_post_save_update_async(instance, field.name, user)
+
+        registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                await _perform_post_save_update_async(instance, field.name, session)
+
+
 def _update_post_save_info_common(user, session, sender, instance, created, **kwargs):
     """Common logic for updating post-save info (creating user and session fields)."""
     if created:
@@ -90,6 +128,31 @@ def _update_post_save_info_common(user, session, sender, instance, created, **kw
         if sender in registry:
             for field in registry.get_fields(sender):
                 _perform_post_save_update(instance, field.name, session)
+
+
+def _update_post_save_info_unified(user, session, sender, instance, created, is_async=False, **kwargs):
+    """
+    Unified logic for updating post-save info (creating user and session fields).
+    
+    Args:
+        user: The user to set in creating user fields
+        session: The session key to set in creating session fields
+        sender: The model class that sent the signal
+        instance: The model instance being saved
+        created: Whether this is a new instance
+        is_async: If True, uses async save methods; if False, uses sync save methods
+        **kwargs: Additional signal arguments
+    """
+    if created:
+        registry = registration.FieldRegistry(fields.CreatingUserField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                _perform_post_save_update_unified(instance, field.name, user, is_async=is_async)
+
+        registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                _perform_post_save_update_unified(instance, field.name, session, is_async=is_async)
 
 
 
@@ -229,7 +292,7 @@ if ASGI_AVAILABLE:
             # Django signals are synchronous and can't directly call async handlers.
             # We wrap the handlers to run in a thread pool when called from async context.
             update_pre_save_info = partial(_update_pre_save_info_common, user, session)
-            update_post_save_info = partial(_update_post_save_info_common, user, session)
+            update_post_save_info = partial(_update_post_save_info_common_async, user, session)
             
             # Wrap handlers to execute in thread pool for ASGI
             async_pre_save_handler = _make_async_signal_handler(update_pre_save_info)
