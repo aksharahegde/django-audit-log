@@ -18,7 +18,7 @@ else:
     __all__ = []
 
 
-def get_asgi_application():
+def get_asgi_application(django_app):
     """
     Get an ASGI application with audit logging middleware applied.
     
@@ -33,7 +33,4 @@ def get_asgi_application():
             "Install with: pip install django-audit-log[asgi]"
         )
     
-    def _get_asgi_application(django_app):
-        return ASGIUserLoggingMiddleware(django_app)
-    
-    return _get_asgi_application
+    return ASGIUserLoggingMiddleware(django_app)

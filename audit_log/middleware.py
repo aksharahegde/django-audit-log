@@ -34,6 +34,59 @@ def _enable_audit_log_managers(instance):
             pass
 
 
+def _update_pre_save_info_common(user, session, sender, instance, **kwargs):
+    """Common logic for updating pre-save info (user and session fields)."""
+    registry = registration.FieldRegistry(fields.LastUserField)
+    if sender in registry:
+        for field in registry.get_fields(sender):
+            setattr(instance, field.name, user)
+
+    registry = registration.FieldRegistry(fields.LastSessionKeyField)
+    if sender in registry:
+        for field in registry.get_fields(sender):
+            setattr(instance, field.name, session)
+
+
+def _update_post_save_info_common(user, session, sender, instance, created, **kwargs):
+    """Common logic for updating post-save info (creating user and session fields)."""
+    if created:
+        registry = registration.FieldRegistry(fields.CreatingUserField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                setattr(instance, field.name, user)
+                _disable_audit_log_managers(instance)
+                instance.save()
+                _enable_audit_log_managers(instance)
+
+        registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                setattr(instance, field.name, session)
+                _disable_audit_log_managers(instance)
+                instance.save()
+                _enable_audit_log_managers(instance)
+
+
+async def _update_post_save_info_async(user, session, sender, instance, created, **kwargs):
+    """Async version of post-save info update for ASGI."""
+    if created:
+        registry = registration.FieldRegistry(fields.CreatingUserField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                setattr(instance, field.name, user)
+                _disable_audit_log_managers(instance)
+                await sync_to_async(instance.save, thread_sensitive=True)()
+                _enable_audit_log_managers(instance)
+
+        registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
+        if sender in registry:
+            for field in registry.get_fields(sender):
+                setattr(instance, field.name, session)
+                _disable_audit_log_managers(instance)
+                await sync_to_async(instance.save, thread_sensitive=True)()
+                _enable_audit_log_managers(instance)
+
+
 class UserLoggingMiddleware(MiddlewareMixin):
     def process_request(self, request):
         if settings.DISABLE_AUDIT_LOG:
@@ -45,9 +98,9 @@ class UserLoggingMiddleware(MiddlewareMixin):
         else:
             user = None
         session = request.session.session_key
-        update_pre_save_info = partial(self._update_pre_save_info, user,
+        update_pre_save_info = partial(_update_pre_save_info_common, user,
                                        session)
-        update_post_save_info = partial(self._update_post_save_info, user,
+        update_post_save_info = partial(_update_post_save_info_common, user,
                                         session)
         signals.pre_save.connect(update_pre_save_info,
                                  dispatch_uid=(self.__class__, request,),
@@ -70,36 +123,6 @@ class UserLoggingMiddleware(MiddlewareMixin):
         signals.post_save.disconnect(dispatch_uid=(self.__class__, request,))
         return None
 
-    def _update_pre_save_info(self, user, session, sender, instance, **kwargs):
-        registry = registration.FieldRegistry(fields.LastUserField)
-        if sender in registry:
-            for field in registry.get_fields(sender):
-                setattr(instance, field.name, user)
-
-        registry = registration.FieldRegistry(fields.LastSessionKeyField)
-        if sender in registry:
-            for field in registry.get_fields(sender):
-                setattr(instance, field.name, session)
-
-    def _update_post_save_info(self, user, session, sender, instance, created,
-                               **kwargs):
-        if created:
-            registry = registration.FieldRegistry(fields.CreatingUserField)
-            if sender in registry:
-                for field in registry.get_fields(sender):
-                    setattr(instance, field.name, user)
-                    _disable_audit_log_managers(instance)
-                    instance.save()
-                    _enable_audit_log_managers(instance)
-
-            registry = registration.FieldRegistry(
-                fields.CreatingSessionKeyField)
-            if sender in registry:
-                for field in registry.get_fields(sender):
-                    setattr(instance, field.name, session)
-                    _disable_audit_log_managers(instance)
-                    instance.save()
-                    _enable_audit_log_managers(instance)
 
 
 class JWTAuthMiddleware(MiddlewareMixin):
@@ -157,23 +180,10 @@ if ASGI_AVAILABLE:
                 await self.app(scope, receive, send)
                 return
             
-            # Create a mock request object for ASGI
-            from django.http import HttpRequest
-            from django.contrib.sessions.middleware import SessionMiddleware
-            from django.contrib.auth.middleware import AuthenticationMiddleware
+            # Create proper ASGI request object
+            from django.core.handlers.asgi import ASGIRequest
             
-            request = HttpRequest()
-            request.method = scope["method"]
-            request.path = scope["path"]
-            request.META = dict(scope.get("headers", []))
-            
-            # Apply session middleware
-            session_middleware = SessionMiddleware(lambda req: None)
-            session_middleware.process_request(request)
-            
-            # Apply auth middleware
-            auth_middleware = AuthenticationMiddleware(lambda req: None)
-            auth_middleware.process_request(request)
+            request = ASGIRequest(scope, receive)
             
             # Process the request with our audit logging logic
             await self._process_request(request)
@@ -192,56 +202,43 @@ if ASGI_AVAILABLE:
                 return
             if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
                 return
+            
+            # Get user from request or scope
             if hasattr(request, 'user') and request.user.is_authenticated:
                 user = request.user
+            elif hasattr(request, 'scope') and 'user' in request.scope:
+                user = request.scope['user']
             else:
                 user = None
-            session = request.session.session_key if hasattr(request, 'session') else None
             
-            update_pre_save_info = partial(self._update_pre_save_info, user, session)
-            update_post_save_info = partial(self._update_post_save_info, user, session)
+            # Get session from request or scope
+            if hasattr(request, 'session') and hasattr(request.session, 'session_key'):
+                session = request.session.session_key
+            elif hasattr(request, 'scope') and 'session' in request.scope:
+                session = request.scope['session'].get('_session_key') if request.scope['session'] else None
+            else:
+                session = None
             
-            signals.pre_save.connect(update_pre_save_info,
-                                   dispatch_uid=(self.__class__, id(request),),
+            update_pre_save_info = partial(_update_pre_save_info_common, user, session)
+            update_post_save_info = partial(_update_post_save_info_async, user, session)
+            
+            # Use sync_to_async to wrap the signal handlers for ASGI
+            async_pre_save_info = sync_to_async(update_pre_save_info, thread_sensitive=True)
+            async_post_save_info = sync_to_async(update_post_save_info, thread_sensitive=True)
+            
+            signals.pre_save.connect(async_pre_save_info,
+                                   dispatch_uid=(self.__class__, request,),
                                    weak=False)
-            signals.post_save.connect(update_post_save_info,
-                                    dispatch_uid=(self.__class__, id(request),),
+            signals.post_save.connect(async_post_save_info,
+                                    dispatch_uid=(self.__class__, request,),
                                     weak=False)
         
         async def _cleanup_signals(self, request):
             if settings.DISABLE_AUDIT_LOG:
                 return
-            signals.pre_save.disconnect(dispatch_uid=(self.__class__, id(request),))
-            signals.post_save.disconnect(dispatch_uid=(self.__class__, id(request),))
+            signals.pre_save.disconnect(dispatch_uid=(self.__class__, request,))
+            signals.post_save.disconnect(dispatch_uid=(self.__class__, request,))
         
-        def _update_pre_save_info(self, user, session, sender, instance, **kwargs):
-            registry = registration.FieldRegistry(fields.LastUserField)
-            if sender in registry:
-                for field in registry.get_fields(sender):
-                    setattr(instance, field.name, user)
-
-            registry = registration.FieldRegistry(fields.LastSessionKeyField)
-            if sender in registry:
-                for field in registry.get_fields(sender):
-                    setattr(instance, field.name, session)
-
-        def _update_post_save_info(self, user, session, sender, instance, created, **kwargs):
-            if created:
-                registry = registration.FieldRegistry(fields.CreatingUserField)
-                if sender in registry:
-                    for field in registry.get_fields(sender):
-                        setattr(instance, field.name, user)
-                        _disable_audit_log_managers(instance)
-                        instance.save()
-                        _enable_audit_log_managers(instance)
-
-                registry = registration.FieldRegistry(fields.CreatingSessionKeyField)
-                if sender in registry:
-                    for field in registry.get_fields(sender):
-                        setattr(instance, field.name, session)
-                        _disable_audit_log_managers(instance)
-                        instance.save()
-                        _enable_audit_log_managers(instance)
 
 
     class ASGIResponseWrapper:
@@ -278,30 +275,13 @@ if ASGI_AVAILABLE:
                 await self.app(scope, receive, send)
                 return
             
-            # Create a mock request object for ASGI
-            from django.http import HttpRequest
-            from django.contrib.sessions.middleware import SessionMiddleware
-            from django.contrib.auth.middleware import AuthenticationMiddleware
+            # Create proper ASGI request object
+            from django.core.handlers.asgi import ASGIRequest
             from django.utils.functional import SimpleLazyObject
             
-            request = HttpRequest()
-            request.method = scope["method"]
-            request.path = scope["path"]
-            request.META = dict(scope.get("headers", []))
-            
-            # Apply session middleware
-            session_middleware = SessionMiddleware(lambda req: None)
-            session_middleware.process_request(request)
-            
-            # Apply auth middleware
-            auth_middleware = AuthenticationMiddleware(lambda req: None)
-            auth_middleware.process_request(request)
+            request = ASGIRequest(scope, receive)
             
             # Apply JWT auth logic
-            assert hasattr(request, 'session'), \
-                """The Django authentication middleware requires session middleware to be installed.
-             Edit your MIDDLEWARE setting to insert 'django.contrib.sessions.middleware.SessionMiddleware'."""
-
             request.user = SimpleLazyObject(lambda: self.get_user_jwt(request))
             
             await self.app(scope, receive, send)
