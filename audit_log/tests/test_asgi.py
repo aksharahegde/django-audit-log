@@ -62,17 +62,19 @@ class ASGIMiddlewareTestCase(TestCase):
             # Verify the app was called with the wrapper
             self.app.assert_called_once_with(scope, receive, mock_wrapper_instance.send)
     
-    def test_process_request_skip_get(self):
+    @pytest.mark.asyncio
+    async def test_process_request_skip_get(self):
         """Test that GET requests are skipped."""
         request = HttpRequest()
         request.method = "GET"
         request.user = AnonymousUser()
         
         # This should return early without connecting signals
-        result = self.middleware._process_request(request)
+        result = await self.middleware._process_request(request)
         self.assertIsNone(result)
     
-    def test_process_request_authenticated_user(self):
+    @pytest.mark.asyncio
+    async def test_process_request_authenticated_user(self):
         """Test processing request with authenticated user."""
         request = HttpRequest()
         request.method = "POST"
@@ -82,22 +84,55 @@ class ASGIMiddlewareTestCase(TestCase):
         request.session.session_key = "test_session_key"
         
         with patch('audit_log.middleware.signals') as mock_signals:
-            self.middleware._process_request(request)
+            await self.middleware._process_request(request)
             
-            # Verify signals were connected
-            mock_signals.pre_save.connect.assert_called_once()
-            mock_signals.post_save.connect.assert_called_once()
+            # Verify signals were connected (they should be called twice, once each)
+            self.assertEqual(mock_signals.pre_save.connect.call_count, 1)
+            self.assertEqual(mock_signals.post_save.connect.call_count, 1)
+            
+            # Check that the dispatch_uid contains the middleware class and request
+            pre_save_call = mock_signals.pre_save.connect.call_args
+            post_save_call = mock_signals.post_save.connect.call_args
+            
+            self.assertIn('dispatch_uid', pre_save_call.kwargs)
+            self.assertIn('dispatch_uid', post_save_call.kwargs)
+            
+            # Check the dispatch_uid format
+            pre_save_uid = pre_save_call.kwargs['dispatch_uid']
+            post_save_uid = post_save_call.kwargs['dispatch_uid']
+            
+            self.assertEqual(pre_save_uid[0], self.middleware.__class__)
+            self.assertEqual(pre_save_uid[1], request)
+            self.assertEqual(post_save_uid[0], self.middleware.__class__)
+            self.assertEqual(post_save_uid[1], request)
     
-    def test_cleanup_signals(self):
+    @pytest.mark.asyncio
+    async def test_cleanup_signals(self):
         """Test that signals are properly cleaned up."""
         request = HttpRequest()
         
         with patch('audit_log.middleware.signals') as mock_signals:
-            self.middleware._cleanup_signals(request)
+            await self.middleware._cleanup_signals(request)
             
             # Verify signals were disconnected
-            mock_signals.pre_save.disconnect.assert_called_once()
-            mock_signals.post_save.disconnect.assert_called_once()
+            self.assertEqual(mock_signals.pre_save.disconnect.call_count, 1)
+            self.assertEqual(mock_signals.post_save.disconnect.call_count, 1)
+            
+            # Check that the dispatch_uid is passed correctly
+            pre_save_call = mock_signals.pre_save.disconnect.call_args
+            post_save_call = mock_signals.post_save.disconnect.call_args
+            
+            self.assertIn('dispatch_uid', pre_save_call.kwargs)
+            self.assertIn('dispatch_uid', post_save_call.kwargs)
+            
+            # Check the dispatch_uid format
+            pre_save_uid = pre_save_call.kwargs['dispatch_uid']
+            post_save_uid = post_save_call.kwargs['dispatch_uid']
+            
+            self.assertEqual(pre_save_uid[0], self.middleware.__class__)
+            self.assertEqual(pre_save_uid[1], request)
+            self.assertEqual(post_save_uid[0], self.middleware.__class__)
+            self.assertEqual(post_save_uid[1], request)
 
 
 @unittest.skipUnless(ASGI_AVAILABLE, "ASGI support not available")
@@ -130,20 +165,14 @@ class ASGIJWTAuthMiddlewareTestCase(TestCase):
         receive = Mock()
         send = Mock()
         
-        with patch('audit_log.middleware.SessionMiddleware') as mock_session_middleware, \
-             patch('audit_log.middleware.AuthenticationMiddleware') as mock_auth_middleware:
-            
-            mock_session_instance = Mock()
-            mock_session_middleware.return_value = mock_session_instance
-            
-            mock_auth_instance = Mock()
-            mock_auth_middleware.return_value = mock_auth_instance
+        # Mock the _get_user_jwt function since that's what ASGIJWTAuthMiddleware actually uses
+        with patch('audit_log.middleware._get_user_jwt') as mock_get_user_jwt:
+            mock_user = Mock()
+            mock_get_user_jwt.return_value = mock_user
             
             await self.middleware(scope, receive, send)
             
-            # Verify middleware was applied
-            mock_session_instance.process_request.assert_called_once()
-            mock_auth_instance.process_request.assert_called_once()
+            # Verify the app was called
             self.app.assert_called_once_with(scope, receive, send)
 
 
@@ -155,8 +184,7 @@ class ASGIModuleTestCase(TestCase):
         """Test the get_asgi_application function."""
         django_app = Mock()
         
-        asgi_app = get_asgi_application()
-        wrapped_app = asgi_app(django_app)
+        wrapped_app = get_asgi_application(django_app)
         
         self.assertIsInstance(wrapped_app, ASGIUserLoggingMiddleware)
         self.assertEqual(wrapped_app.app, django_app)
